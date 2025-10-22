@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MIDI Poison</title>
+    <!-- External Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <script src="https://unpkg.com/@tonejs/midi"></script>
+    <script src="https://unpkg.com/wavesurfer.js"></script>
+    
+    <!-- UI Styles -->
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; background: #121212; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+      :root { --accent: #0d7377; --muted: #242424; }
+      .app { height: 100%; display: grid; grid-template-rows: auto 1fr auto; gap: 0; }
+      .header { background: #1a1a1a; border-bottom: 1px solid #333; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+      .logo { font-size: 18px; font-weight: 600; letter-spacing: 1px; }
+      .header-center { display: flex; gap: 10px; align-items: center; }
+      .main { display: grid; grid-template-columns: 1fr 320px; overflow: hidden; }
+      .canvas-area { background: #121212; position: relative; overflow: hidden; padding: 24px; display: flex; flex-direction: column; gap: 24px; }
+      
+      #file-management-area { flex-grow: 1; display: flex; flex-direction: column; }
+      .file-drop-zone { border: 2px dashed #4a5568; border-radius: 0.5rem; padding: 2rem; text-align: center; cursor: pointer; transition: background-color 0.2s; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+      .file-drop-zone.drag-over { background-color: #2d3748; }
+      #file-name { color: var(--accent); font-weight: bold; margin-top: 8px; }
+      #midi-directory { list-style: none; height: 100%; overflow-y: auto; background: #181818; border-radius: 4px; border: 1px solid #333; }
+      #midi-directory li { padding: 10px 14px; font-size: 12px; cursor: pointer; border-bottom: 1px solid #282828; transition: background-color 0.15s; }
+      #midi-directory li:hover { background-color: var(--muted); }
+      #midi-directory li.active { background-color: var(--accent); color: white; font-weight: bold; }
+
+      .controls-section { display: none; }
+      .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+      #waveform { cursor: pointer; border-radius: 4px; overflow: hidden; }
+      #waveform-loading { text-align: center; color: #888; font-size: 12px; }
+
+      .panel { background: #1a1a1a; border-left: 1px solid #333; display: none; grid-template-rows: auto 1fr; overflow: hidden; }
+      .panel-header { padding: 16px; border-bottom: 1px solid #333; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #999; }
+      .panel-content { overflow-y: auto; padding: 16px; }
+      .panel-content::-webkit-scrollbar { width: 6px; }
+      .panel-content::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+      .section { margin-bottom: 20px; }
+      .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #999; margin-bottom: 10px; }
+      
+      #poison-palette { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .texture-slot { background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 4px; padding: 8px; text-align: center; font-size: 11px; transition: all 0.2s; }
+      .texture-slot.playing { border-color: var(--accent); box-shadow: 0 0 10px var(--accent); transform: scale(1.05); }
+      .texture-slot .algo-name { font-size: 10px; text-transform: uppercase; color: #888; }
+      .texture-slot .slot-index { font-size: 16px; font-weight: bold; color: #eee; }
+
+      .btn { padding: 10px 14px; background: var(--accent); border: none; color: #fff; font-size: 12px; font-weight: 600; border-radius: 4px; cursor: pointer; transition: all 0.2s; text-transform: uppercase; letter-spacing: 0.5px; width: 100%; text-align: center; }
+      .btn:hover { background: #14a085; }
+      .btn.secondary { background: #424242; }
+      .btn.secondary:hover { background: #505050; }
+      .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .control-label { font-size: 11px; color: #999; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; display: flex; justify-content: space-between; }
+      input[type="range"] { width: 100%; height: 4px; background: #2a2a2a; border: none; border-radius: 2px; -webkit-appearance: none; cursor: pointer; }
+      input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--accent); border-radius: 50%; cursor: pointer; }
+      input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: var(--accent); border-radius: 50%; cursor: pointer; border: none; }
+      
+      .footer { background: #1a1a1a; border-top: 1px solid #333; display: flex; align-items: center; justify-content: center; padding: 0 24px; font-size: 11px; color: #666; height: 40px; }
+      .hidden { display: none !important; }
+
+      @media (max-width: 768px) {
+        .main { grid-template-columns: 1fr; grid-template-rows: minmax(200px, 1fr) auto; }
+        .panel { border-left: none; border-top: 1px solid #333; display: grid !important; }
+        .canvas-area { min-height: 250px; }
+        .header { flex-wrap: wrap; padding: 12px; height: auto; gap: 12px; justify-content: center; }
+        .header-center { order: 2; width: 100%; justify-content: center; }
+        .logo { order: 1; flex-basis: 100%; text-align: center; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="logo">MIDI POISON</div>
+        <div class="header-center">
+          <button id="load-folder-btn" class="btn secondary">Load Folder</button>
+          <button id="play-btn" class="btn">Play</button>
+          <button id="stop-btn" class="btn secondary">Stop</button>
+          <button id="loop-btn" class="btn secondary">Loop</button>
+        </div>
+      </header>
+
+      <main class="main">
+        <div class="canvas-area">
+          <div id="file-management-area">
+              <div id="file-drop-zone" class="file-drop-zone">
+                <p id="drop-zone-text">Drag & drop a MIDI file or click "Load Folder"</p>
+                <p id="file-name"></p>
+                <input type="file" id="file-input" class="hidden" accept=".mid,.midi"/>
+              </div>
+              <ul id="midi-directory" class="hidden"></ul>
+          </div>
+
+          <div id="controls-section" class="controls-section">
+            <div class="controls-grid">
+               <div class="control-wrap">
+                   <label for="bpm" class="control-label"><span>BPM</span><span id="bpm-value">120</span></label>
+                   <input type="range" id="bpm" min="40" max="240" value="120" />
+               </div>
+               <div class="control-wrap">
+                   <label for="envelope" class="control-label"><span>Envelope</span><span id="envelope-value">100ms</span></label>
+                   <input type="range" id="envelope" min="1" max="500" value="100" />
+               </div>
+            </div>
+            <div id="waveform-loading"></div>
+            <div id="waveform"></div>
+          </div>
+        </div>
+
+        <div id="panel" class="panel">
+          <div class="panel-header">Poison Palette</div>
+          <div class="panel-content">
+            <section class="section">
+                <button id="randomize-palette-btn" class="btn secondary">Randomize</button>
+            </section>
+            <section class="section">
+                <div id="poison-palette"></div>
+            </section>
+            <section class="section">
+                <div class="section-title">Download</div>
+                <div class="btn-group">
+                    <button id="download-loop-btn" class="btn">Full Loop</button>
+                    <button id="download-shots-btn" class="btn secondary">One-Shots</button>
+                </div>
+            </section>
+          </div>
+        </div>
+      </main>
+
+      <footer class="footer">A generative audio tool</footer>
+    </div>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        // DOM Elements
+        const fileManagementArea = document.getElementById("file-management-area");
+        const fileDropZone = document.getElementById("file-drop-zone");
+        const fileInput = document.getElementById("file-input");
+        const fileNameDisplay = document.getElementById("file-name");
+        const controlsSection = document.getElementById("controls-section");
+        const panel = document.getElementById("panel");
+        const loadFolderBtn = document.getElementById("load-folder-btn");
+        const midiDirectory = document.getElementById("midi-directory");
+        const bpmSlider = document.getElementById("bpm");
+        const bpmValue = document.getElementById("bpm-value");
+        const envelopeSlider = document.getElementById("envelope");
+        const envelopeValue = document.getElementById("envelope-value");
+        const playBtn = document.getElementById("play-btn");
+        const stopBtn = document.getElementById("stop-btn");
+        const loopBtn = document.getElementById("loop-btn");
+        const randomizePaletteBtn = document.getElementById("randomize-palette-btn");
+        const poisonPalette = document.getElementById("poison-palette");
+        const downloadLoopBtn = document.getElementById("download-loop-btn");
+        const downloadShotsBtn = document.getElementById("download-shots-btn");
+        const waveformLoading = document.getElementById("waveform-loading");
+
+        // State
+        let midi = null, synths = [], poisonSynths = [], poisonBuffers = [], currentAlgorithms = [], midiFiles = [];
+        let currentMidiIndex = -1, envelopeDuration = 0.1, sampleRate = 44100;
+        let wavesurfer = null, isLooping = false, isScrubbing = false;
+
+        // --- MASSIVELY EXPANDED SOUND ALGORITHMS ---
+        const soundAlgorithms = [
+            // DATA & GLITCH
+            { name: "hex-math", generator: (i, k, p) => ((((i * k) & 255) / 128 - 1) * Math.sin(i * 0.01 * k)) % 1 },
+            { name: "binary-count", generator: (i, k, p) => (i.toString(2)[(Math.floor(p * 16)) % i.toString(2).length] === '1' ? 1 : -1) * (k / 10) },
+            { name: "bytebeat", generator: (i, k) => { const t = i >> k; return ((t * (t >> 8 | t >> 12)) & 255) / 128 - 1; } },
+            { name: "lfsr-glitch", type: 'processor', state: { lfsr: 0xACE1 }, generator: function() { const bit = ((this.state.lfsr >> 0) ^ (this.state.lfsr >> 2) ^ (this.state.lfsr >> 3) ^ (this.state.lfsr >> 5)) & 1; this.state.lfsr = (this.state.lfsr >> 1) | (bit << 15); return (this.state.lfsr / 65535) * 2 - 1; } },
+
+            // ADVANCED SYNTHESIS
+            { name: "fm-cascade", generator: (i, k, p, s) => { const f = 220 * k; return Math.sin(2 * Math.PI * f * (i / s) + Math.sin(2 * Math.PI * f * 2 * (i / s) + Math.sin(2 * Math.PI * f * 4 * p * (i / s)))); } },
+            { name: "phase-distort", generator: (i, k, p, s) => { const f = 220 * k; const phase = 2 * Math.PI * f * (i / s); const dist = Math.sin(phase * (1 + p * k)); return Math.sin(phase + dist); } },
+            { name: "filtered-saw", type: 'processor', generator: (i, data, e, k, p) => { const freq = 110 * k; const t = (e / sampleRate) * freq; const saw = (t % 1) * 2 - 1; const cutoff = 1 - Math.pow(p, 0.5); return e === 0 ? 0 : saw * cutoff + data[e - 1] * (1 - cutoff); } },
+            { name: "grain-cloud", generator: (i, k, p, s) => { const gRate = 50 + k * 20; const gPos = ((i / s) * gRate) % 1; const gEnv = Math.pow(Math.sin(gPos * Math.PI), 8); return Math.sin(2 * Math.PI * 440 * k * (i/s)) * gEnv; } },
+            
+            // PHYSICAL MODELING & WAVEGUIDES
+            { name: "karplus-strong", type: 'processor', generator: (input, data, i, k) => { const period = Math.max(2, Math.floor(sampleRate / (110 * k))); return i < period ? Math.random() * 2 - 1 : (data[i - period] + data[i - (period - 1)]) * 0.498; } },
+            { name: "membrane", type: 'processor', state: {y1:0, y2:0}, generator: function(input, data, i, k){ const impulse = (i < 2) ? Math.random() : 0; this.state.y1 = Math.tanh(impulse + this.state.y2 * (0.9 - k*0.05) - this.state.y1); this.state.y2 = Math.tanh(this.state.y1); return this.state.y2; }},
+            { name: "resonant-tube", type: 'processor', generator: (i, data, e, k, p) => { const d = Math.floor(50 + k * 20 - p * 40); if (e < d) return Math.random(); return (data[e - d] + data[e - d + 1]) * 0.5 - data[e-1]*0.1; }},
+            { name: "waveguide-mesh", type: 'processor', state: { grid: [[0,0],[0,0]] }, generator: function(input, data, i, k) { if (i < 2) { this.state.grid = [[Math.random(), Math.random()], [Math.random(), Math.random()]]; return this.state.grid[0][0]; } const [g, s] = [this.state.grid, this.state]; const avg = (s.grid[0][0] + s.grid[1][1]) * 0.5; s.grid = [[g[1][1], g[0][1]],[g[1][0], g[0][0]]]; s.grid[0][0] -= avg * (0.5 + k * 0.1); return avg; }},
+
+            // WAVELETS & PROCESSING
+            { name: "wavelet-burst", generator: (i, k, p, s) => { const freq = 440 * k; const decay = Math.exp(-i / (s * 0.05 * (p + 0.1))); return Math.sin(2 * Math.PI * freq * i / s) * Math.sin(Math.PI * i / (s * 0.1)) * decay; } },
+            { name: "formant-noise", type: 'processor', state: {f1:0,f2:0}, generator: function(input, data, i, k) { const vowels = [[270,2290],[390,1990],[660,1720]]; const [f1,f2] = vowels[k%3]; this.state.f1 += (input-this.state.f1)*f1/sampleRate; this.state.f2+=(this.state.f1-this.state.f2)*f2/sampleRate; return this.state.f2; }},
+            
+            // CHAOTIC & NOISE
+            { name: "lorenz-attractor", type: 'processor', state: { x:0.1, y:0.1, z:0.1 }, generator: function(input, data, i, k) { const [s,r,b,dt]=[10,28,8/3,0.01]; const {x,y,z}=this.state; this.state.x += dt*s*(y-x); this.state.y += dt*(x*(r-z)-y); this.state.z += dt*(x*y-b*z); return this.state.z / 50; }},
+            { name: "static-crackle", type: 'processor', state: {last:0}, generator: function() { const r = Math.random(); this.state.last = r > 0.99 ? r : this.state.last * 0.95; return this.state.last; }},
+        ];
+
+        // --- Event Listeners & UI ---
+        function initializeEventListeners() {
+            fileDropZone.addEventListener("click", () => fileInput.click());
+            fileDropZone.addEventListener("dragover", (e) => { e.preventDefault(); fileDropZone.classList.add("drag-over"); });
+            fileDropZone.addEventListener("dragleave", () => fileDropZone.classList.remove("drag-over"));
+            fileDropZone.addEventListener("drop", (e) => { e.preventDefault(); fileDropZone.classList.remove("drag-over"); if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0], -1, true); });
+            fileInput.addEventListener("change", (e) => { if (e.target.files.length > 0) handleFile(e.target.files[0], -1, true); });
+            
+            loadFolderBtn.addEventListener("click", loadFolder);
+            midiDirectory.addEventListener("click", (e) => { if (e.target?.matches("li")) { const index = parseInt(e.target.dataset.index, 10); if (index !== currentMidiIndex) handleFile(midiFiles[index], index); }});
+
+            bpmSlider.addEventListener('input', (e) => bpmValue.textContent = e.target.value);
+            bpmSlider.addEventListener('change', (e) => { if (Tone.Transport) Tone.Transport.bpm.value = e.target.value; });
+            envelopeSlider.addEventListener('input', (e) => envelopeValue.textContent = `${e.target.value}ms`);
+            envelopeSlider.addEventListener('change', (e) => { envelopeDuration = parseInt(e.target.value, 10) / 1000; if (midi) randomizePaletteBtn.click(); });
+
+            playBtn.addEventListener("click", async () => { if (midi && Tone.Transport.state !== "started") { await Tone.start(); Tone.Transport.start(); updateWaveformPosition(); } });
+            stopBtn.addEventListener("click", () => { forceStopAndReset(); if(wavesurfer) wavesurfer.seekTo(0); document.querySelectorAll(".texture-slot.playing").forEach(el => el.classList.remove("playing")); });
+            loopBtn.addEventListener("click", () => { isLooping = !isLooping; if(Tone.Transport) Tone.Transport.loop = isLooping; loopBtn.classList.toggle('secondary', !isLooping); });
+            
+            randomizePaletteBtn.addEventListener("click", () => {
+                if (!midi) return;
+                const wasPlaying = Tone.Transport.state === "started";
+                forceStopAndReset();
+                generatePoisonPalette(); 
+                generateAndLoadWaveform().then(() => { if(wasPlaying) playBtn.click(); });
+            });
+
+            downloadLoopBtn.addEventListener("click", downloadFullLoop);
+            downloadShotsBtn.addEventListener("click", downloadOneShots);
+        }
+
+        // --- Core Logic ---
+        function forceStopAndReset() { Tone.Transport.stop(); Tone.Transport.cancel(0); Tone.Transport.position = 0; }
+
+        async function loadFolder() {
+            try {
+                const directoryHandle = await window.showDirectoryPicker();
+                midiFiles = [];
+                for await (const entry of directoryHandle.values()) {
+                    if (entry.kind === 'file' && (entry.name.endsWith('.mid') || entry.name.endsWith('.midi'))) midiFiles.push(await entry.getFile());
+                }
+                if (midiFiles.length === 0) { alert("No MIDI files found."); return; }
+                midiFiles.sort((a,b) => a.name.localeCompare(b.name));
+                
+                midiDirectory.innerHTML = '';
+                midiFiles.forEach((file, index) => {
+                    const li = document.createElement('li');
+                    li.textContent = file.name;
+                    li.dataset.index = index;
+                    midiDirectory.appendChild(li);
+                });
+
+                fileDropZone.classList.add("hidden");
+                midiDirectory.classList.remove("hidden");
+                await handleFile(midiFiles[0], 0);
+            } catch (err) { console.warn("Folder loading cancelled or failed:", err); }
+        }
+
+        async function handleFile(file, index, isSingleFile = false) {
+          forceStopAndReset();
+          currentMidiIndex = index;
+
+          if (isSingleFile) {
+            midiFiles = [file];
+            currentMidiIndex = 0;
+            fileDropZone.classList.add("hidden");
+            midiDirectory.classList.remove("hidden");
+            midiDirectory.innerHTML = `<li class="active" data-index="0">${file.name}</li>`;
+          }
+          
+          try {
+            const arrayBuffer = await file.arrayBuffer();
+            midi = new Midi(arrayBuffer);
+          } catch (error) { resetAppStateOnError("Could not parse MIDI file."); return; }
+          
+          if (!midi.tracks?.length || midi.tracks.every(t => t.notes.length === 0)) { resetAppStateOnError("MIDI file is empty."); return; }
+          
+          await Tone.start();
+          sampleRate = Tone.context.sampleRate;
+
+          Tone.Transport.bpm.value = (midi.header.tempos[0]?.bpm) || 120;
+          bpmSlider.value = Tone.Transport.bpm.value;
+          bpmValue.textContent = Math.round(Tone.Transport.bpm.value);
+          Tone.Transport.loopStart = 0;
+          Tone.Transport.loopEnd = midi.duration;
+          
+          document.querySelectorAll('#midi-directory li').forEach(li => li.classList.remove('active'));
+          const activeLi = document.querySelector(`#midi-directory li[data-index="${currentMidiIndex}"]`);
+          if(activeLi) activeLi.classList.add('active');
+
+          controlsSection.style.display = 'block';
+          panel.style.display = 'grid';
+
+          generatePoisonPalette();
+          await generateAndLoadWaveform();
+        }
+        
+        function setupPlayback() {
+            if (!midi) return;
+            forceStopAndReset();
+            synths.forEach(s => s.dispose()); synths = [];
+            poisonSynths.forEach(ps => ps.dispose()); poisonSynths = [];
+            
+            synths.push(new Tone.MembraneSynth().toDestination());
+            poisonBuffers.forEach(buffer => poisonSynths.push(new Tone.Player(buffer).toDestination()));
+            
+            midi.tracks.forEach(track => {
+                if (track.notes.length > 0) {
+                    new Tone.Part((time, note) => {
+                        synths[0].triggerAttackRelease(note.name, "8n", time, note.velocity);
+                        const pIndex = note.midi % 10;
+                        const player = poisonSynths[pIndex];
+                        if (player) {
+                            player.playbackRate = 0.5 + (note.velocity * 1.5);
+                            player.start(time);
+                            const slot = document.getElementById(`texture-slot-${pIndex}`);
+                            if (slot) { slot.classList.add("playing"); setTimeout(() => slot.classList.remove("playing"), 100); }
+                        }
+                    }, track.notes).start(0);
+                }
+            });
+        }
+        
+        function generatePoisonPalette() {
+            if (!midi) return;
+            poisonBuffers = [], poisonPalette.innerHTML = "", currentAlgorithms = [];
+            for (let i = 0; i < 10; i++) {
+                const algorithm = { ...soundAlgorithms[Math.floor(Math.random() * soundAlgorithms.length)] };
+                if(algorithm.state) algorithm.state = JSON.parse(JSON.stringify(algorithm.state));
+                currentAlgorithms.push(algorithm);
+                poisonBuffers.push(generatePoisonSound(i, algorithm, envelopeDuration));
+                const slot = document.createElement("div");
+                slot.id = `texture-slot-${i}`;
+                slot.className = "texture-slot";
+                slot.innerHTML = `<div class="algo-name">${algorithm.name}</div><div class="slot-index">${i}</div>`;
+                poisonPalette.appendChild(slot);
+            }
+        }
+
+        function generatePoisonSound(index, algorithm, duration) {
+          const frameCount = Math.max(1, Math.floor(sampleRate * duration));
+          const buffer = Tone.context.createBuffer(1, frameCount, sampleRate);
+          const data = buffer.getChannelData(0);
+          const k = index + 1;
+          let lastOut = 0;
+          for (let i = 0; i < frameCount; i++) {
+            const p = i / frameCount;
+            let rawValue = 0;
+            if (algorithm.type === 'processor') {
+                rawValue = algorithm.generator(Math.random() * 2 - 1, data, i, k, p, sampleRate);
+            } else { rawValue = algorithm.generator(i, k, p, sampleRate); }
+            const ampEnv = Math.pow(1 - p, 4);
+            const lpgEnv = Math.pow(1 - p, 1.5);
+            const cutoff = 150 + lpgEnv * 12000;
+            lastOut += (cutoff / sampleRate) * (rawValue - lastOut);
+            data[i] = lastOut * ampEnv * 0.8;
+          }
+          return buffer;
+        }
+
+        async function generateAndLoadWaveform() {
+            if (!midi) return;
+            waveformLoading.textContent = 'Generating waveform...';
+            const buffer = await renderOffline();
+            setupPlayback();
+            const wav = bufferToWave(buffer.get());
+            if (wavesurfer) { wavesurfer.destroy(); }
+            wavesurfer = WaveSurfer.create({ container: '#waveform', waveColor: '#4A5568', progressColor: '#0d7377', barWidth: 3, barRadius: 2, height: 80, });
+            wavesurfer.loadBlob(new Blob([wav], { type: "audio/wav" }));
+            wavesurfer.on('ready', () => { waveformLoading.textContent = ''; });
+            wavesurfer.on('interaction', () => { isScrubbing = true; });
+            wavesurfer.on('seek', (p) => { if (midi) { Tone.Transport.seconds = midi.duration * p; } setTimeout(() => { isScrubbing = false; }, 100); });
+        }
+        
+        function updateWaveformPosition() {
+            if (Tone.Transport.state === 'started' && wavesurfer && !isScrubbing && midi) {
+                wavesurfer.seekTo(Tone.Transport.seconds / midi.duration);
+                requestAnimationFrame(updateWaveformPosition);
+            }
+        }
+
+        async function renderOffline() {
+            if (!midi) return null;
+            const offlineContext = new Tone.OfflineContext(2, midi.duration, sampleRate);
+            const offlineDrumSynth = new Tone.MembraneSynth({ context: offlineContext }).toDestination();
+            const offlinePoisonPlayers = poisonBuffers.map(b => new Tone.Player({ url: b, context: offlineContext }).toDestination());
+            midi.tracks.forEach(track => {
+                if (track.notes.length > 0) {
+                    new Tone.Part((time, note) => {
+                        offlineDrumSynth.triggerAttackRelease(note.name, "8n", time, note.velocity);
+                        const pIndex = note.midi % 10, player = offlinePoisonPlayers[pIndex];
+                        if (player) { player.playbackRate = 0.5 + (note.velocity * 1.5); player.start(time); }
+                    }, track.notes).start(0);
+                }
+            });
+            await offlineContext.transport.start();
+            return await offlineContext.render();
+        }
+
+        async function downloadFullLoop() {
+          if (!midi || currentMidiIndex < 0) return;
+          alert("Rendering loop...");
+          const buffer = await renderOffline();
+          const blob = new Blob([bufferToWave(buffer.get())], { type: "audio/wav" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `${midiFiles[currentMidiIndex].name.replace(/\.mid(i)?/i, "")}_poison_loop.wav`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        }
+
+        function downloadOneShots() {
+          poisonBuffers.forEach((buffer, i) => {
+            const blob = new Blob([bufferToWave(buffer)], { type: "audio/wav" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = `poison_shot_${currentAlgorithms[i].name}_${i}.wav`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+          });
+        }
+        
+        function bufferToWave(abuffer) {
+          let n=abuffer.numberOfChannels,l=abuffer.length*n*2+44,b=new ArrayBuffer(l),v=new DataView(b),c=[],i,s,o=0,p=0;
+          function setUint16(d){v.setUint16(p,d,true);p+=2;}
+          function setUint32(d){v.setUint32(p,d,true);p+=4;}
+          setUint32(0x46464952);setUint32(l-8);setUint32(0x45564157);setUint32(0x20746d66);setUint32(16);setUint16(1);setUint16(n);setUint32(abuffer.sampleRate);setUint32(abuffer.sampleRate*2*n);setUint16(n*2);setUint16(16);setUint32(0x61746164);setUint32(l-p-4);
+          for(i=0;i<abuffer.numberOfChannels;i++)c.push(abuffer.getChannelData(i));
+          while(p<l){for(i=0;i<n;i++){s=Math.max(-1,Math.min(1,c[i][o]));s=s<0?s*0x8000:s*0x7FFF;v.setInt16(p,s,true);p+=2;}o++;}
+          return b;
+        }
+
+        function resetAppStateOnError(message) {
+            alert(message);
+            midi = null;
+            forceStopAndReset();
+            fileDropZone.classList.remove("hidden");
+            midiDirectory.classList.add("hidden");
+            controlsSection.style.display = 'none';
+            panel.style.display = 'none';
+            dropZoneText.textContent = "Drag & drop a MIDI file or click 'Load Folder'";
+            fileNameDisplay.textContent = "";
+            if (wavesurfer) { wavesurfer.destroy(); wavesurfer = null; }
+        }
+        
+        initializeEventListeners();
+      });
+    </script>
+  </body>
+</html>
