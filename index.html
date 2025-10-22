@@ -115,9 +115,25 @@
           <div class="panel-header">Poison Palette</div>
           <div class="panel-content">
             <section class="section">
-                <button id="randomize-palette-btn" class="btn secondary">Randomize</button>
+                <button id="randomize-palette-btn" class="btn secondary">Randomize (R)</button>
+            </section>
+            <section id="new-controls-section" class="section">
+                <div class="section-title">Global Controls</div>
+                <div class="control-wrap" style="margin-bottom: 16px;">
+                    <label for="global-pitch" class="control-label"><span>Global Pitch</span><span id="global-pitch-value">0 st</span></label>
+                    <input type="range" id="global-pitch" min="-12" max="12" value="0" />
+                </div>
+                <div class="control-wrap" style="margin-bottom: 16px;">
+                    <label for="random-pitch" class="control-label"><span>Random Pitch</span><span id="random-pitch-value">0%</span></label>
+                    <input type="range" id="random-pitch" min="0" max="100" value="0" />
+                </div>
+                <div class="control-wrap">
+                    <label for="texture" class="control-label"><span>Texture</span><span id="texture-value">50%</span></label>
+                    <input type="range" id="texture" min="0" max="100" value="50" />
+                </div>
             </section>
             <section class="section">
+                <div class="section-title">Sounds</div>
                 <div id="poison-palette"></div>
             </section>
             <section class="section">
@@ -131,7 +147,7 @@
         </div>
       </main>
 
-      <footer class="footer">A generative audio tool</footer>
+      <footer class="footer">Spacebar to Play/Stop</footer>
     </div>
 
     <script>
@@ -149,6 +165,12 @@
         const bpmValue = document.getElementById("bpm-value");
         const envelopeSlider = document.getElementById("envelope");
         const envelopeValue = document.getElementById("envelope-value");
+        const globalPitchSlider = document.getElementById("global-pitch");
+        const globalPitchValue = document.getElementById("global-pitch-value");
+        const randomPitchSlider = document.getElementById("random-pitch");
+        const randomPitchValue = document.getElementById("random-pitch-value");
+        const textureSlider = document.getElementById("texture");
+        const textureValue = document.getElementById("texture-value");
         const playBtn = document.getElementById("play-btn");
         const stopBtn = document.getElementById("stop-btn");
         const loopBtn = document.getElementById("loop-btn");
@@ -159,41 +181,24 @@
         const waveformLoading = document.getElementById("waveform-loading");
 
         // State
-        let midi = null, synths = [], poisonSynths = [], poisonBuffers = [], currentAlgorithms = [], midiFiles = [];
-        let currentMidiIndex = -1, envelopeDuration = 0.1, sampleRate = 44100;
-        let wavesurfer = null, isLooping = false, isScrubbing = false;
+        let midi=null, synths=[], poisonSynths=[], poisonBuffers=[], currentAlgorithms=[], midiFiles=[];
+        let currentMidiIndex=-1, envelopeDuration=0.1, sampleRate=44100;
+        let wavesurfer=null, isLooping=false, isScrubbing=false;
+        let globalPitch=0, randomPitch=0, texture=0.5;
 
-        // --- MASSIVELY EXPANDED SOUND ALGORITHMS ---
-        const soundAlgorithms = [
-            // DATA & GLITCH
-            { name: "hex-math", generator: (i, k, p) => ((((i * k) & 255) / 128 - 1) * Math.sin(i * 0.01 * k)) % 1 },
-            { name: "binary-count", generator: (i, k, p) => (i.toString(2)[(Math.floor(p * 16)) % i.toString(2).length] === '1' ? 1 : -1) * (k / 10) },
-            { name: "bytebeat", generator: (i, k) => { const t = i >> k; return ((t * (t >> 8 | t >> 12)) & 255) / 128 - 1; } },
-            { name: "lfsr-glitch", type: 'processor', state: { lfsr: 0xACE1 }, generator: function() { const bit = ((this.state.lfsr >> 0) ^ (this.state.lfsr >> 2) ^ (this.state.lfsr >> 3) ^ (this.state.lfsr >> 5)) & 1; this.state.lfsr = (this.state.lfsr >> 1) | (bit << 15); return (this.state.lfsr / 65535) * 2 - 1; } },
+        const soundAlgorithms=[{name:"hex-math",modulators:{rate:v=>1+v,filter:v=>200+v*8e3,Q:v=>1+v*2,texture:v=>v},generator:(i,k,p,s,vel,tex)=>((((i*k)&255)/128-1)*Math.sin(i*.01*k*tex))%1},{name:"bytebeat",modulators:{rate:v=>.8+v*.5,filter:v=>500+v*1e4,Q:v=>1,texture:v=>v},generator:(i,k,p,s,vel,tex)=>{const t=i>>(k%(Math.floor(tex*7)+1)+1);return(t*(t>>8|t>>12)&255)/128-1}},{name:"lfsr-glitch",modulators:{rate:v=>.5+v*2,filter:v=>1e3+v*1e4,Q:v=>1+v*5,texture:v=>v},type:"processor",state:{lfsr:42069},generator:function(i,t,e,r,n,a,o,s){const l=this.state.lfsr>>0^this.state.lfsr>>2^this.state.lfsr>>3^this.state.lfsr>>5&1;return this.state.lfsr=this.state.lfsr>>1|l<<15,this.state.lfsr/65535*2-1}},{name:"foldover",modulators:{rate:v=>1,filter:v=>1e3,Q:v=>1+v*10,texture:v=>v},type:"processor",generator:(i,t,e,r,n,a,o,s)=>{const l=1-o*.8,d=i*(r/2+(s*4));return d>l?l-(d-l):d<-l?-l-(d+-l):d}},{name:"ring-mod",modulators:{rate:v=>1+v,filter:v=>500+v*5e3,Q:v=>1,texture:v=>v},type:"processor",generator:(i,t,e,r,n,a,o,s)=>{const l=220*r*(1+o*2)*(1+s);return i*Math.sin(2*Math.PI*l*(e/a))}},{name:"phase-distort",modulators:{rate:v=>1,filter:v=>400+v*6e3,Q:v=>1+v*4,texture:v=>v},generator:(i,t,e,r,n,a,o,s)=>{const l=110*t,d=2*Math.PI*l*(i/r),u=Math.sin(d*(1+e*t*(1+n*5)*(1+s*5)));return Math.sin(d+u)}},{name:"pwm-synth",modulators:{rate:v=>1,filter:v=>200+v*5e3,Q:v=>1+v*8,texture:v=>v},generator:(i,t,e,r,n,a,o,s)=>{const l=110*t,d=(i/r)*l,u=.5+Math.sin(d*Math.PI*2*(e*5))*s*n*.4;return d%1<u?1:-1}},{name:"pulsar",modulators:{rate:v=>.5+v,filter:v=>500+v*1e4,Q:v=>2+v*5,texture:v=>v},generator:(i,t,e,r,n,a,o,s)=>{const l=20+t*10,d=(i/r)*l,u=880*(1+e*2),c=d%1*r*(.01+n*(.05+s*.1));return Math.sin(2*Math.PI*u*c)*Math.pow(Math.sin(d*Math.PI),16)}},{name:"karplus-strong",modulators:{rate:v=>1+v,filter:v=>200+v*8e3,Q:v=>1+v*5,texture:v=>v},type:"processor",generator:(i,t,e,r,n,a,o,s)=>{const l=Math.max(2,Math.floor(a/(110*r))),d=.5-o*.1-(s*.1);return e<l?2*Math.random()-1:(t[e-l]+t[e-(l-1)])*d}},{name:"membrane",modulators:{rate:v=>1,filter:v=>100+v*4e3,Q:v=>1+v*10,texture:v=>v},type:"processor",state:{y1:0,y2:0},generator:function(i,t,e,r,n,a,o,s){const l=e<2?Math.random():0,d=.9-r*.05-o*.1-(s*.1);return this.state.y1=Math.tanh(l+this.state.y2*d-this.state.y1),this.state.y2=Math.tanh(this.state.y1),this.state.y2}},{name:"wavelet-burst",modulators:{rate:v=>1,filter:v=>500+v*1e4,Q:v=>1+v*2,texture:v=>v},generator:(i,t,e,r,n,a,o,s)=>{const l=440*t*(1+n),d=Math.exp(-i/(r*(.05*(e+s)+.05)));return Math.sin(2*Math.PI*l*i/r)*Math.sin(Math.PI*i/(r*.1))*d}},{name:"formant-noise",modulators:{rate:v=>1,filter:v=>500,Q:v=>1+v*20,texture:v=>v},type:"processor",state:{f1:0,f2:0},generator:function(i,t,e,r,n,a,o,s){const l=[[270,2290],[390,1990],[660,1720]],d=Math.floor(o*2.99),u=l[d],c=u[0]+s*880,h=u[1]+s*2e3;return this.state.f1+=(i-this.state.f1)*c/a,this.state.f2+=(this.state.f1-this.state.f2)*h/a,this.state.f2}},{name:"glitch-buffer",modulators:{rate:v=>1,filter:v=>1e3+v*1e4,Q:v=>1,texture:v=>v},type:"processor",generator:(i,t,e,r,n,a,o,s)=>{const l=Math.floor(a*.01*r),d=Math.floor(o*8+(s*8));return e%l>l/(d+1)?t[e-e%l]:i}},{name:"lorenz-attractor",modulators:{rate:v=>.5+v,filter:v=>200+v*2e3,Q:v=>1,texture:v=>v},type:"processor",state:{x:.1,y:.1,z:.1},generator:function(i,t,e,r,n,a,o,s){const l=10+s*10,d=28+o*20,u=8/3,c=.01,h=this.state,p=h.x,m=h.y,f=h.z;return this.state.x+=c*l*(m-p),this.state.y+=c*(p*(d-f)-m),this.state.z+=c*(p*m-u*f),this.state.z/50}}];
 
-            // ADVANCED SYNTHESIS
-            { name: "fm-cascade", generator: (i, k, p, s) => { const f = 220 * k; return Math.sin(2 * Math.PI * f * (i / s) + Math.sin(2 * Math.PI * f * 2 * (i / s) + Math.sin(2 * Math.PI * f * 4 * p * (i / s)))); } },
-            { name: "phase-distort", generator: (i, k, p, s) => { const f = 220 * k; const phase = 2 * Math.PI * f * (i / s); const dist = Math.sin(phase * (1 + p * k)); return Math.sin(phase + dist); } },
-            { name: "filtered-saw", type: 'processor', generator: (i, data, e, k, p) => { const freq = 110 * k; const t = (e / sampleRate) * freq; const saw = (t % 1) * 2 - 1; const cutoff = 1 - Math.pow(p, 0.5); return e === 0 ? 0 : saw * cutoff + data[e - 1] * (1 - cutoff); } },
-            { name: "grain-cloud", generator: (i, k, p, s) => { const gRate = 50 + k * 20; const gPos = ((i / s) * gRate) % 1; const gEnv = Math.pow(Math.sin(gPos * Math.PI), 8); return Math.sin(2 * Math.PI * 440 * k * (i/s)) * gEnv; } },
-            
-            // PHYSICAL MODELING & WAVEGUIDES
-            { name: "karplus-strong", type: 'processor', generator: (input, data, i, k) => { const period = Math.max(2, Math.floor(sampleRate / (110 * k))); return i < period ? Math.random() * 2 - 1 : (data[i - period] + data[i - (period - 1)]) * 0.498; } },
-            { name: "membrane", type: 'processor', state: {y1:0, y2:0}, generator: function(input, data, i, k){ const impulse = (i < 2) ? Math.random() : 0; this.state.y1 = Math.tanh(impulse + this.state.y2 * (0.9 - k*0.05) - this.state.y1); this.state.y2 = Math.tanh(this.state.y1); return this.state.y2; }},
-            { name: "resonant-tube", type: 'processor', generator: (i, data, e, k, p) => { const d = Math.floor(50 + k * 20 - p * 40); if (e < d) return Math.random(); return (data[e - d] + data[e - d + 1]) * 0.5 - data[e-1]*0.1; }},
-            { name: "waveguide-mesh", type: 'processor', state: { grid: [[0,0],[0,0]] }, generator: function(input, data, i, k) { if (i < 2) { this.state.grid = [[Math.random(), Math.random()], [Math.random(), Math.random()]]; return this.state.grid[0][0]; } const [g, s] = [this.state.grid, this.state]; const avg = (s.grid[0][0] + s.grid[1][1]) * 0.5; s.grid = [[g[1][1], g[0][1]],[g[1][0], g[0][0]]]; s.grid[0][0] -= avg * (0.5 + k * 0.1); return avg; }},
-
-            // WAVELETS & PROCESSING
-            { name: "wavelet-burst", generator: (i, k, p, s) => { const freq = 440 * k; const decay = Math.exp(-i / (s * 0.05 * (p + 0.1))); return Math.sin(2 * Math.PI * freq * i / s) * Math.sin(Math.PI * i / (s * 0.1)) * decay; } },
-            { name: "formant-noise", type: 'processor', state: {f1:0,f2:0}, generator: function(input, data, i, k) { const vowels = [[270,2290],[390,1990],[660,1720]]; const [f1,f2] = vowels[k%3]; this.state.f1 += (input-this.state.f1)*f1/sampleRate; this.state.f2+=(this.state.f1-this.state.f2)*f2/sampleRate; return this.state.f2; }},
-            
-            // CHAOTIC & NOISE
-            { name: "lorenz-attractor", type: 'processor', state: { x:0.1, y:0.1, z:0.1 }, generator: function(input, data, i, k) { const [s,r,b,dt]=[10,28,8/3,0.01]; const {x,y,z}=this.state; this.state.x += dt*s*(y-x); this.state.y += dt*(x*(r-z)-y); this.state.z += dt*(x*y-b*z); return this.state.z / 50; }},
-            { name: "static-crackle", type: 'processor', state: {last:0}, generator: function() { const r = Math.random(); this.state.last = r > 0.99 ? r : this.state.last * 0.95; return this.state.last; }},
-        ];
-
-        // --- Event Listeners & UI ---
         function initializeEventListeners() {
+            window.addEventListener('keydown', (e) => {
+                if(e.target.matches('input, textarea, select')) return;
+                if(e.code === 'Space') {
+                    e.preventDefault();
+                    if(Tone.Transport.state === 'started') stopBtn.click();
+                    else playBtn.click();
+                }
+                if(e.code === 'KeyR') randomizePaletteBtn.click();
+            });
+
             fileDropZone.addEventListener("click", () => fileInput.click());
             fileDropZone.addEventListener("dragover", (e) => { e.preventDefault(); fileDropZone.classList.add("drag-over"); });
             fileDropZone.addEventListener("dragleave", () => fileDropZone.classList.remove("drag-over"));
@@ -207,6 +212,10 @@
             bpmSlider.addEventListener('change', (e) => { if (Tone.Transport) Tone.Transport.bpm.value = e.target.value; });
             envelopeSlider.addEventListener('input', (e) => envelopeValue.textContent = `${e.target.value}ms`);
             envelopeSlider.addEventListener('change', (e) => { envelopeDuration = parseInt(e.target.value, 10) / 1000; if (midi) randomizePaletteBtn.click(); });
+            globalPitchSlider.addEventListener('input', (e) => { globalPitch = parseInt(e.target.value, 10); globalPitchValue.textContent = `${globalPitch} st`; });
+            randomPitchSlider.addEventListener('input', (e) => { randomPitch = parseInt(e.target.value, 10) / 100; randomPitchValue.textContent = `${e.target.value}%`; });
+            textureSlider.addEventListener('input', (e) => { texture = parseInt(e.target.value, 10) / 100; textureValue.textContent = `${e.target.value}%`; });
+            [globalPitchSlider, randomPitchSlider, textureSlider].forEach(slider => slider.addEventListener('change', () => { if (midi) randomizePaletteBtn.click(); }));
 
             playBtn.addEventListener("click", async () => { if (midi && Tone.Transport.state !== "started") { await Tone.start(); Tone.Transport.start(); updateWaveformPosition(); } });
             stopBtn.addEventListener("click", () => { forceStopAndReset(); if(wavesurfer) wavesurfer.seekTo(0); document.querySelectorAll(".texture-slot.playing").forEach(el => el.classList.remove("playing")); });
@@ -224,7 +233,6 @@
             downloadShotsBtn.addEventListener("click", downloadOneShots);
         }
 
-        // --- Core Logic ---
         function forceStopAndReset() { Tone.Transport.stop(); Tone.Transport.cancel(0); Tone.Transport.position = 0; }
 
         async function loadFolder() {
@@ -254,7 +262,7 @@
         async function handleFile(file, index, isSingleFile = false) {
           forceStopAndReset();
           currentMidiIndex = index;
-
+          
           if (isSingleFile) {
             midiFiles = [file];
             currentMidiIndex = 0;
@@ -294,20 +302,31 @@
             if (!midi) return;
             forceStopAndReset();
             synths.forEach(s => s.dispose()); synths = [];
-            poisonSynths.forEach(ps => ps.dispose()); poisonSynths = [];
+            poisonSynths.forEach(ps => { ps.player.dispose(); ps.filter.dispose(); }); poisonSynths = [];
             
             synths.push(new Tone.MembraneSynth().toDestination());
-            poisonBuffers.forEach(buffer => poisonSynths.push(new Tone.Player(buffer).toDestination()));
+            poisonBuffers.forEach((buffer, i) => {
+                const player = new Tone.Player(buffer);
+                const filter = new Tone.Filter(20000, "lowpass");
+                player.chain(filter, Tone.Destination);
+                poisonSynths.push({ player, filter, algorithm: currentAlgorithms[i] });
+            });
             
             midi.tracks.forEach(track => {
                 if (track.notes.length > 0) {
                     new Tone.Part((time, note) => {
                         synths[0].triggerAttackRelease(note.name, "8n", time, note.velocity);
                         const pIndex = note.midi % 10;
-                        const player = poisonSynths[pIndex];
-                        if (player) {
-                            player.playbackRate = 0.5 + (note.velocity * 1.5);
-                            player.start(time);
+                        const synth = poisonSynths[pIndex];
+                        if (synth) {
+                            const vel = note.velocity;
+                            const mod = synth.algorithm.modulators;
+                            const globalPitchMultiplier = Math.pow(2, globalPitch / 12);
+                            const randomPitchOffset = 1 + (Math.random() * randomPitch - randomPitch / 2);
+                            synth.player.playbackRate = mod.rate(vel) * globalPitchMultiplier * randomPitchOffset;
+                            synth.filter.frequency.value = mod.filter(vel);
+                            synth.filter.Q.value = mod.Q(vel);
+                            synth.player.start(time);
                             const slot = document.getElementById(`texture-slot-${pIndex}`);
                             if (slot) { slot.classList.add("playing"); setTimeout(() => slot.classList.remove("playing"), 100); }
                         }
@@ -338,12 +357,13 @@
           const data = buffer.getChannelData(0);
           const k = index + 1;
           let lastOut = 0;
+          const vel = 0.7; // Generate with a default "medium" velocity
           for (let i = 0; i < frameCount; i++) {
             const p = i / frameCount;
             let rawValue = 0;
             if (algorithm.type === 'processor') {
-                rawValue = algorithm.generator(Math.random() * 2 - 1, data, i, k, p, sampleRate);
-            } else { rawValue = algorithm.generator(i, k, p, sampleRate); }
+                rawValue = algorithm.generator(Math.random() * 2 - 1, data, i, k, p, sampleRate, vel, texture);
+            } else { rawValue = algorithm.generator(i, k, p, sampleRate, vel, texture); }
             const ampEnv = Math.pow(1 - p, 4);
             const lpgEnv = Math.pow(1 - p, 1.5);
             const cutoff = 150 + lpgEnv * 12000;
@@ -357,6 +377,7 @@
             if (!midi) return;
             waveformLoading.textContent = 'Generating waveform...';
             const buffer = await renderOffline();
+            if(!buffer) return;
             setupPlayback();
             const wav = bufferToWave(buffer.get());
             if (wavesurfer) { wavesurfer.destroy(); }
@@ -378,14 +399,32 @@
             if (!midi) return null;
             const offlineContext = new Tone.OfflineContext(2, midi.duration, sampleRate);
             const offlineDrumSynth = new Tone.MembraneSynth({ context: offlineContext }).toDestination();
-            const offlinePoisonPlayers = poisonBuffers.map(b => new Tone.Player({ url: b, context: offlineContext }).toDestination());
+            const offlineSynths = poisonBuffers.map((b, i) => {
+                const player = new Tone.Player({ url: b, context: offlineContext });
+                const filter = new Tone.Filter({ context: offlineContext });
+                player.chain(filter, offlineContext.destination);
+                return { player, filter, algorithm: currentAlgorithms[i] };
+            });
             midi.tracks.forEach(track => {
                 if (track.notes.length > 0) {
-                    new Tone.Part((time, note) => {
-                        offlineDrumSynth.triggerAttackRelease(note.name, "8n", time, note.velocity);
-                        const pIndex = note.midi % 10, player = offlinePoisonPlayers[pIndex];
-                        if (player) { player.playbackRate = 0.5 + (note.velocity * 1.5); player.start(time); }
-                    }, track.notes).start(0);
+                    new Tone.Part({
+                        context: offlineContext,
+                        callback: (time, note) => {
+                            offlineDrumSynth.triggerAttackRelease(note.name, "8n", time, note.velocity);
+                            const pIndex = note.midi % 10, synth = offlineSynths[pIndex];
+                            if (synth) {
+                                const vel = note.velocity;
+                                const mod = synth.algorithm.modulators;
+                                const globalPitchMultiplier = Math.pow(2, globalPitch / 12);
+                                const randomPitchOffset = 1 + (Math.random() * randomPitch - randomPitch / 2);
+                                synth.player.playbackRate = mod.rate(vel) * globalPitchMultiplier * randomPitchOffset;
+                                synth.filter.frequency.value = mod.filter(vel);
+                                synth.filter.Q.value = mod.Q(vel);
+                                synth.player.start(time);
+                            }
+                        },
+                        events: track.notes
+                    }).start(0);
                 }
             });
             await offlineContext.transport.start();
